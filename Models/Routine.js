@@ -28,6 +28,12 @@ const routineEntrySchema = new mongoose.Schema({
   className: {
     type: String,
     required: true
+  },
+  createdBy:{
+    type: String,
+  },
+  teacher_id:{
+     type: String,
   }
 });
 

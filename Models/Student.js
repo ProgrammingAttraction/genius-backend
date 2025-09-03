@@ -60,22 +60,12 @@ const studentSchema = new mongoose.Schema({
   gender: {
     type: String,
     required: [true, 'Gender is required'],
-    enum: ['male', 'female', 'other']
   },
   birthdate: {
     type: Date,
     required: [true, 'Birth date is required']
   },
-  education: {
-    type: String,
-    required: [true, 'Education is required'],
-    trim: true
-  },
-  subject: {
-    type: String,
-    required: [true, 'Subject is required'],
-    trim: true
-  },
+ 
   mobile: {
     type: String,
     required: [true, 'Mobile number is required'],
@@ -160,6 +150,13 @@ const studentSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+  group:{
+    type: String,
+  },
+  religion:{
+     type: String,
+    required:true
   }
 });
 

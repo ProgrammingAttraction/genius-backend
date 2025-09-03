@@ -7,8 +7,6 @@ const Teacher = require('../Models/Teacher');
 const signup = async (req, res) => {
 
 }
-
-
 const login = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -66,9 +64,6 @@ const login = async (req, res) => {
         });
     }
 };
-
-
-
 const profile_update = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -93,8 +88,6 @@ const profile_update = async (req, res) => {
             })
     }
 }
-
-
 module.exports = {
     signup,
     login,

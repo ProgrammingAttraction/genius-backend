@@ -18,7 +18,11 @@ app.use(bodyParser.json());
 app.use(express.urlencoded())
 app.use(cors(
     {
-        origin:["http://localhost:5173"], // Specify the allowed origin
+        origin:[
+        "http://localhost:5173",
+        "https://genius.arbeittechnology.com",
+        "https://genius-school.arbeittechnology.com"
+        ], // Specify the allowed origin
         methods: ["GET", "POST", "PUT", "DELETE","PATCH","OPTIONS"], // Specify allowed methods
         allowedHeaders: ["Content-Type", "Authorization"], // Specify allowed headers
         credentials: true, // Allow credentials (cookies, etc.)
@@ -29,115 +33,8 @@ app.use(express.static("public"))
 app.use('/auth', AuthRouter);
 app.use('/api/admin', Adminrouter);
 app.get("/",(req,res)=>{
-    res.send("hello oracle-soft backend part!")
+    res.send("hello backend part!")
 })
-
-
-app.post('/send-notification-to-topic', async (req, res) => {
-    const { topic, title, body } = req.body;
-
-    const message = {
-        notification: {
-            title: title,
-            body: body,
-        },
-        topic: topic,
-    };
-
-    try {
-        const response = await admin.messaging().send(message);
-        console.log('Notification sent successfully:', response);
-        res.status(200).send('Notification sent successfully');
-    } catch (error) {
-        console.error('Error sending notification:', error);
-        res.status(500).send('Error sending notification');
-    }
-}
-);
-app.post('/send-notification-to-multiple-topics', async (req, res) => {
-    const { topics, title, body } = req.body;
-
-    const message = {
-        notification: {
-            title: title,
-            body: body,
-        },
-        topics: topics,
-    };
-
-    try {
-        const response = await admin.messaging().send(message);
-        console.log('Notification sent successfully:', response);
-        res.status(200).send('Notification sent successfully');
-    } catch (error) {
-        console.error('Error sending notification:', error);
-        res.status(500).send('Error sending notification');
-    }
-}
-);
-app.post('/send-notification-to-multiple-devices', async (req, res) => {
-    const { tokens, title, body } = req.body;
-
-    const message = {
-        notification: {
-            title: title,
-            body: body,
-        },
-        tokens: tokens,
-    };
-
-    try {
-        const response = await admin.messaging().sendMulticast(message);
-        console.log('Notification sent successfully:', response);
-        res.status(200).send('Notification sent successfully');
-    } catch (error) {
-        console.error('Error sending notification:', error);
-        res.status(500).send('Error sending notification');
-    }
-}
-);
-app.post('/send-notification-to-device', async (req, res) => {
-    const { token, title, body } = req.body;
-
-    const message = {
-        notification: {
-            title: title,
-            body: body,
-        },
-        token: token,
-    };
-
-    try {
-        const response = await admin.messaging().send(message);
-        console.log('Notification sent successfully:', response);
-        res.status(200).send('Notification sent successfully');
-    } catch (error) {
-        console.error('Error sending notification:', error);
-        res.status(500).send('Error sending notification');
-    }
-}
-);
-app.post('/send-notification-to-multiple-devices', async (req, res) => {
-    const { tokens, title, body } = req.body;
-
-    const message = {
-        notification: {
-            title: title,
-            body: body,
-        },
-        tokens: tokens,
-    };
-
-    try {
-        const response = await admin.messaging().sendMulticast(message);
-        console.log('Notification sent successfully:', response);
-        res.status(200).send('Notification sent successfully');
-    } catch (error) {
-        console.error('Error sending notification:', error);
-        res.status(500).send('Error sending notification');
-    }
-}
-);
 
 
 

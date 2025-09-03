@@ -67,6 +67,33 @@ const teacherSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  nidNumber: {
+    type: String,
+    required: true,
+    unique: true,
+    validate: {
+      validator: function(v) {
+        // Basic validation for NID (adjust according to your country's NID format)
+        return /^[0-9]{10,17}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid NID number!`
+    }
+  },
+  nidPhoto: {
+    type: String,
+    required: true,
+    default: ''
+  },
+  emergencyContact: {
+    type: String,
+    required: true,
+    validate: {
+      validator: function(v) {
+        return /^\d{11}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid emergency contact number!`
+    }
+  },
   createdAt: {
     type: Date,
     default: Date.now

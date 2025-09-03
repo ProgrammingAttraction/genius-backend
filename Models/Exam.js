@@ -4,7 +4,6 @@ const examEntrySchema = new mongoose.Schema({
   examType: {
     type: String,
     required: true,
-    enum: ['Midterm', 'Final', 'Quiz', 'Practical']
   },
   day: {
     type: String,
@@ -37,6 +36,14 @@ const examEntrySchema = new mongoose.Schema({
   },
   supervisor: {
     type: String,
+    required: true
+  },
+    createdBy:{
+    type: String,
+    required: true
+  },
+  teacher_id:{
+     type: String,
     required: true
   }
 });

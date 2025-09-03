@@ -13,6 +13,10 @@ const Routine = require('../Models/Routine');
 const Exam = require('../Models/Exam');
 const DailyDiary = require('../Models/Dailydairy');
 const Notification = require('../Models/Notification');
+const Attendance = require('../Models/Attendence');
+const Examname = require('../Models/Examname');
+const ImagePost = require('../Models/ImagePost');
+const Notice = require('../Models/Notice');
 // ------------file-upload----------
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -23,12 +27,172 @@ const storage = multer.diskStorage({
   },
 });
 const uploadimage = multer({ storage: storage });
+
+
+// ---------------all-countation-------------------------------
+// Dashboard Statistics Route
+Adminrouter.get('/dashboard/stats', async (req, res) => {
+  try {
+    const today = new Date();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    // Calculate start of the week (Sunday)
+    const dayOfWeek = today.getDay(); // 0 (Sunday) to 6 (Saturday)
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - dayOfWeek);
+    weekStart.setHours(0, 0, 0, 0);
+
+    // 30 days ago
+    const monthStart = new Date(today);
+    monthStart.setDate(today.getDate() - 30);
+    monthStart.setHours(0, 0, 0, 0);
+
+    // Execute all queries in parallel
+    const [
+      totalStudents,
+      totalTeachers,
+      attendanceRecords,
+      examsToday,
+      thisWeekStudents,
+      thisWeekTeachers,
+      lastMonthStudents,
+      lastMonthTeachers
+    ] = await Promise.all([
+      Student.countDocuments({ educationStatus: 'active' }),
+      Teacher.countDocuments(),
+      Attendance.aggregate([
+        {
+          $match: {
+            date: { $gte: todayStart, $lte: todayEnd }
+          }
+        },
+        { $unwind: '$students' },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            present: {
+              $sum: { $cond: [{ $eq: ['$students.present', true] }, 1, 0] }
+            },
+            late: {
+              $sum: { $cond: [{ $eq: ['$students.late', true] }, 1, 0] }
+            }
+          }
+        }
+      ]),
+      Exam.aggregate([
+        { $unwind: '$examRoutine' },
+        {
+          $match: {
+            'examRoutine.date': { $gte: todayStart, $lte: todayEnd }
+          }
+        },
+        { $count: 'total' }
+      ]),
+      Student.countDocuments({ createdAt: { $gte: weekStart } }),
+      Teacher.countDocuments({ createdAt: { $gte: weekStart } }),
+      Student.countDocuments({ createdAt: { $gte: monthStart } }),
+      Teacher.countDocuments({ createdAt: { $gte: monthStart } })
+    ]);
+
+    // Attendance rate calculation
+    const attendanceData = attendanceRecords[0] || { total: 0, present: 0, late: 0 };
+    const attendanceRate = attendanceData.total > 0
+      ? Math.round(((attendanceData.present + attendanceData.late * 0.5) / attendanceData.total) * 100)
+      : 0;
+
+    const examsTodayCount = examsToday[0]?.total || 0;
+
+    // Percent change helpers
+    const getPercentChange = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return Math.round(((current - previous) / previous) * 100);
+    };
+
+    const studentGrowthPercent = getPercentChange(thisWeekStudents, lastMonthStudents);
+    const teacherGrowthPercent = getPercentChange(thisWeekTeachers, lastMonthTeachers);
+
+    res.json({
+      success: true,
+      data: {
+        totalStudents,
+        totalTeachers,
+        attendanceRate,
+        examsToday: examsTodayCount,
+        thisWeekStudents,
+        thisWeekTeachers,
+        studentGrowthPercent,
+        teacherGrowthPercent
+      }
+    });
+
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+Adminrouter.get('/recent-activities', async (req, res) => {
+  try {
+    // Fetch latest 5 students
+    const students = await Student.find({})
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('name createdAt');
+
+    // Fetch latest 5 teachers
+    const teachers = await Teacher.find({})
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('name createdAt');
+
+    // Fetch latest 5 exam routines
+    const examRoutines = await Exam.find({})
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('createdAt examRoutine');
+
+    // Format data
+    const studentActivities = students.map(s => ({
+      message: `New student registered: ${s.name}`,
+      time: s.createdAt
+    }));
+
+    const teacherActivities = teachers.map(t => ({
+      message: `New teacher added: ${t.name}`,
+      time: t.createdAt
+    }));
+
+    const examActivities = examRoutines.map(e => ({
+      message: `Exam routine created with ${e.examRoutine.length} entry(ies)`,
+      time: e.createdAt
+    }));
+
+    // Merge and sort by time
+    const allActivities = [...studentActivities, ...teacherActivities, ...examActivities]
+      .sort((a, b) => new Date(b.time) - new Date(a.time));
+
+    // Format time string for frontend
+    const activities = allActivities.map(act => ({
+      message: act.message,
+      time: new Date(act.time).toLocaleString()
+    }));
+
+    res.status(200).json({ success: true, activities });
+  } catch (error) {
+    console.error('Error fetching recent activities:', error);
+    res.status(500).json({ success: false, message: 'Failed to load recent activities' });
+  }
+});
 // Create a new student
 Adminrouter.post('/create-student',uploadimage.single("profilePic"),async(req,res)=>{
        try {
       const {
         id, name, fatherName, motherName, address, gender, birthdate,
-        education, subject, mobile, email, password, classRoll, studentClass, section
+        mobile, email, password, classRoll, studentClass, section,group,religion
       } = req.body;
         console.log(req.body)
       // Check if profile picture was uploaded
@@ -55,15 +219,15 @@ Adminrouter.post('/create-student',uploadimage.single("profilePic"),async(req,re
         address,
         gender,
         birthdate,
-        education,
-        subject,
         mobile,
         email,
         password:hashpassword,
         classRoll,
         studentClass,
         section,
-        profilePic: profilePicPath
+        profilePic: profilePicPath,
+        group,
+        religion
       });
 
       await newStudent.save();
@@ -124,11 +288,17 @@ Adminrouter.get('/students', async (req, res) => {
 Adminrouter.get('/search-students', async (req, res) => {
   try {
     const query = {};
+    
     if (req.query.classId) {
-      query.classId = req.query.classId;
+      query.studentClass = req.query.classId;
     }
-    console.log(query)
-    const students = await Student.find({studentClass:query.classId});
+    
+    if (req.query.sectionId) {
+      query.section = req.query.sectionId;
+    }
+    
+    const students = await Student.find(query);
+    
     res.status(200).json({ 
       success: true, 
       data: students 
@@ -165,11 +335,36 @@ Adminrouter.get('/student/:id', async (req, res) => {
     });
   }
 });
+// ------------------class-student-filter---------------------
+Adminrouter.get('/class-student/:id', async (req, res) => {
+  try {
+    // console.log(res.params.id)
 
+    const student = await Student.find({ studentClass: req.params.id});
+    console.log(student)
+    if (!student) {
+      return res.json({ 
+        success: false, 
+        message: 'Student not found' 
+      });
+    }
+    res.status(200).json({ 
+      success: true, 
+      data: student 
+    });
+  } catch (error) {
+    console.log(error)
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
 // Update a student
 Adminrouter.put('/update-student/:id', uploadimage.single("profilepic"), async (req, res) => {
   try {
-    const student = await Student.findOne({ id: req.params.id });
+    console.log(req.params)
+    const student = await Student.findById({_id: req.params.id });
     if (!student) {
       return res.status(404).json({ 
         success: false, 
@@ -194,13 +389,52 @@ Adminrouter.put('/update-student/:id', uploadimage.single("profilepic"), async (
       data: student 
     });
   } catch (error) {
+    console.log(error)
     res.status(500).json({ 
       success: false, 
       message: error.message 
     });
   }
 });
+// Delete multiple students at once
+Adminrouter.delete('/delete-students', async (req, res) => {
+  try {
+    const { studentIds } = req.body;
+    
+    // Check if studentIds is provided and is an array
+    if (!studentIds || !Array.isArray(studentIds)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please provide an array of student IDs to delete' 
+      });
+    }
 
+    // Delete all students with IDs in the array
+    const result = await Student.deleteMany({ 
+      _id: { $in: studentIds } 
+    });
+
+    // Check if any students were deleted
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No students found with the provided IDs' 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: `Successfully deleted ${result.deletedCount} students`,
+      deletedCount: result.deletedCount 
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
 // Delete a student
 Adminrouter.delete('/delete-student/:id', async (req, res) => {
   try {
@@ -222,25 +456,53 @@ Adminrouter.delete('/delete-student/:id', async (req, res) => {
     });
   }
 });
-// Create a new teacher
-Adminrouter.post('/create-teacher', uploadimage.single('profilePic'), async (req, res) => {
+
+
+// Create a new teacher (updated to match model and previous style)
+Adminrouter.post('/create-teacher', uploadimage.fields([
+  { name: 'profilePic', maxCount: 1 },
+  { name: 'nidPhoto', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { id, name, fatherName, motherName, address, gender, education, subject, mobile, email, password } = req.body;
+    const { 
+      id, 
+      name, 
+      fatherName, 
+      motherName, 
+      address, 
+      gender, 
+      education, 
+      subject, 
+      mobile, 
+      email, 
+      password,
+      nidNumber,
+      emergencyContact
+    } = req.body;
     
-    // Check if teacher with same ID or email already exists
-    const existingTeacher = await Teacher.findOne({ $or: [{ id }, { email }] });
+    // Check for existing teacher (now includes nidNumber check)
+    const existingTeacher = await Teacher.findOne({ 
+      $or: [{ id }, { email }, { nidNumber }] 
+    });
+    
     if (existingTeacher) {
-      // Delete uploaded file if teacher already exists
-      if (req.file) {
-        fs.unlinkSync(req.file.filename);
+      // Clean up uploaded files if exists
+      if (req.files) {
+        if (req.files.profilePic) fs.unlinkSync(req.files.profilePic[0].path);
+        if (req.files.nidPhoto) fs.unlinkSync(req.files.nidPhoto[0].path);
       }
+      
+      let errorField;
+      if (existingTeacher.id === id) errorField = 'ID';
+      else if (existingTeacher.email === email) errorField = 'email';
+      else errorField = 'NID number';
+      
       return res.status(400).json({ 
-        error: existingTeacher.id === id ? 
-          'Teacher with this ID already exists' : 
-          'Teacher with this email already exists' 
+        error: `Teacher with this ${errorField} already exists` 
       });
     }
 
+    // Create new teacher with all model fields
     const teacher = new Teacher({
       id,
       name,
@@ -253,29 +515,41 @@ Adminrouter.post('/create-teacher', uploadimage.single('profilePic'), async (req
       mobile,
       email,
       password,
-      profilePic: req.file.filename
+      nidNumber,
+      emergencyContact,
+      profilePic: req.files.profilePic ? req.files.profilePic[0].filename : '',
+      nidPhoto: req.files.nidPhoto ? req.files.nidPhoto[0].filename : ''
     });
 
     await teacher.save();
 
+    // Response matches previous format but includes new fields
     res.status(201).json({
       message: 'Teacher created successfully',
       teacher: {
         id: teacher.id,
         name: teacher.name,
         email: teacher.email,
-        profilePic: teacher.profilePic
+        mobile: teacher.mobile,
+        profilePic: teacher.profilePic,
+        nidNumber: teacher.nidNumber
       }
     });
   } catch (err) {
-    // Delete uploaded file if error occurs
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
+    // Error handling maintains previous style
+    if (req.files) {
+      if (req.files.profilePic) fs.unlinkSync(req.files.profilePic[0].path);
+      if (req.files.nidPhoto) fs.unlinkSync(req.files.nidPhoto[0].path);
     }
-    console.error('Error creating teacher:', err);
-    res.status(500).json({ error: 'Server error while creating teacher' });
+    
+    console.error('Teacher creation error:', err);
+    res.status(500).json({ 
+      error: 'Failed to create teacher',
+      systemError: err.message 
+    });
   }
 });
+
 
 // Get all teachers
 Adminrouter.get('/all-teachers', async (req, res) => {
@@ -450,7 +724,37 @@ Adminrouter.put('/teacher/update-password/:id', async (req, res) => {
     });
   }
 });
+// Delete all teachers
+Adminrouter.delete('/delete-all-teachers', async (req, res) => {
+  try {
+    // Get all teachers first to delete their profile pictures
+    const teachers = await Teacher.find();
+    
+    // Delete all profile pictures
+    teachers.forEach(teacher => {
+      if (teacher.profilePic) {
+        const imagePath = path.join(__dirname, '../', teacher.profilePic);
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      }
+    });
 
+    // Delete all teachers from database
+    const result = await Teacher.deleteMany({});
+    
+    res.json({ 
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} teachers` 
+    });
+  } catch (err) {
+    console.error('Error deleting all teachers:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Server error while deleting all teachers' 
+    });
+  }
+});
 // -----------------------class-route-----------------------
 // CREATE: Add a new class
 Adminrouter.post('/new-class', async (req, res) => {
@@ -461,9 +765,13 @@ Adminrouter.post('/new-class', async (req, res) => {
   }
 
   try {
+    const matchedclass=await Classmodel.findOne({className:className});
+    if(matchedclass){
+    return res.json({success:false, message: 'Class already exist!'});
+    }
     const newClass = new Classmodel({ className, classTeacher });
     await newClass.save();
-    res.status(201).json({ message: 'Class added successfully', class: newClass });
+    res.status(201).json({success:true,message: 'Class added successfully', class: newClass });
   } catch (error) {
     console.error('Error saving class:', error);
     res.status(500).json({ message: 'Failed to add class' });
@@ -519,7 +827,29 @@ Adminrouter.delete('/class/:id', async (req, res) => {
     res.status(500).json({ message: 'Failed to delete class' });
   }
 });
+// DELETE: Delete all classes
+Adminrouter.delete('/delete-all-classes', async (req, res) => {
+  try {
+    // Optional: Add authentication/authorization check here if needed
+    // if (!req.user.isAdmin) {
+    //   return res.status(403).json({ message: 'Unauthorized' });
+    // }
 
+    const result = await Classmodel.deleteMany({});
+    
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: 'No classes found to delete' });
+    }
+
+    res.status(200).json({ 
+      message: 'All classes deleted successfully',
+      deletedCount: result.deletedCount 
+    });
+  } catch (error) {
+    console.error('Error deleting all classes:', error);
+    res.status(500).json({ message: 'Failed to delete all classes' });
+  }
+});
 
 // CREATE: Add a new section
 Adminrouter.post('/sections', async (req, res) => {
@@ -620,14 +950,38 @@ Adminrouter.delete('/sections/:id', async (req, res) => {
   }
 });
 
-// Submit attendance for a class
+// DELETE: Remove a section or student by ID
+// DELETE: Remove multiple sections
+Adminrouter.post('/sections/delete-multiple', async (req, res) => {
+  const { sectionIds } = req.body;
 
+  if (!sectionIds || !Array.isArray(sectionIds) || sectionIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'No sections selected' });
+  }
+
+  try {
+    const result = await Section.deleteMany({ _id: { $in: sectionIds } });
+    
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, message: 'No sections found to delete' });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: `${result.deletedCount} section(s) deleted successfully` 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Failed to delete sections' });
+  }
+});
+// Submit attendance for a class
 Adminrouter.post('/attendance', async (req, res) => {
   try {
-    const { classId, date, attendance } = req.body;
+    const { classId, sectionId, date, attendance, createdBy } = req.body;
 
-    if (!classId || !date || !attendance) {
-      return res.status(400).json({ success: false, message: 'Class ID, date, and attendance data are required' });
+    if (!classId || !date || !attendance || !createdBy) {
+      return res.status(400).json({ success: false, message: 'Class ID, date, attendance data, and createdBy are required' });
     }
 
     const attendanceDate = new Date(date);
@@ -635,116 +989,362 @@ Adminrouter.post('/attendance', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid date format' });
     }
 
+    // Check if attendance already exists for this class/section/date
+    const existingAttendance = await Attendance.findOne({
+      classId,
+      sectionId: sectionId || null,
+      date: attendanceDate
+    });
+
     const studentIds = Object.keys(attendance);
-    const bulkOps = [];
     const notificationOps = [];
 
-    for (const studentId of studentIds) {
+    // Prepare the students array for the attendance record
+    const studentsAttendance = studentIds.map(studentId => {
       const studentAttendance = attendance[studentId];
-      let status;
+      let status = {};
+      let statusText;
 
-      if (studentAttendance.present) status = 'present';
-      else if (studentAttendance.absent) status = 'absent';
-      else if (studentAttendance.late) status = 'late';
-      else {
-        return res.status(400).json({ success: false, message: `Invalid attendance status for student ${studentId}` });
-      }
-
-      const existingAttendance = await Student.findOne({
-        _id: studentId,
-        'attendance.date': attendanceDate
-      });
-
-  let statusText;
-
-if (studentAttendance.present) {
-  status = 'present';
-  statusText = 'উপস্থিত';
-} else if (studentAttendance.absent) {
-  status = 'absent';
-  statusText = 'অনুপস্থিত';
-} else if (studentAttendance.late) {
-  status = 'late';
-  statusText = 'বিলম্বিত';
-} else {
-  return res.status(400).json({ 
-    success: false,
-    message: `Invalid attendance status for student ${studentId}` 
-  });
-}
-const notification = {
-  title: 'হাজিরা সংরক্ষিত হয়েছে',
-  message: `${attendanceDate.toLocaleDateString('bn-BD')} তারিখের জন্য আপনার হাজিরা "${statusText}" হিসেবে চিহ্নিত করা হয়েছে।`,
-  date: new Date()
-};
-
-      if (existingAttendance) {
-        // Update existing attendance record and push notification
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: studentId, 'attendance.date': attendanceDate },
-            update: {
-              $set: {
-                'attendance.$.status': status,
-                updatedAt: new Date()
-              },
-              $push: {
-                notifications: notification
-              }
-            }
-          }
-        });
+      if (studentAttendance.present) {
+        status = { present: true, absent: false, late: false };
+        statusText = 'উপস্থিত';
+      } else if (studentAttendance.absent) {
+        status = { present: false, absent: true, late: false };
+        statusText = 'অনুপস্থিত';
+      } else if (studentAttendance.late) {
+        status = { present: false, absent: false, late: true };
+        statusText = 'বিলম্বিত';
       } else {
-        // Add new attendance and push notification
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: studentId, studentClass: classId },
-            update: {
-              $push: {
-                attendance: { date: attendanceDate, status },
-                notifications: notification
-              },
-              $set: { updatedAt: new Date() }
-            }
-          }
-        });
+        throw new Error(`Invalid attendance status for student ${studentId}`);
       }
 
-      // Also save notification in separate Notification model
+      // Prepare notification for each student
       notificationOps.push({
         studentId,
-        ...notification
+        title: 'হাজিরা সংরক্ষিত হয়েছে',
+        message: `${attendanceDate.toLocaleDateString('bn-BD')} তারিখের জন্য আপনার হাজিরা "${statusText}" হিসেবে চিহ্নিত করা হয়েছে।`,
+        date: new Date()
+      });
+
+      return {
+        studentId,
+        ...status,
+        remarks: studentAttendance.remarks || ''
+      };
+    });
+
+    let attendanceRecord;
+    if (existingAttendance) {
+      // Update existing attendance record
+      existingAttendance.students = studentsAttendance;
+      existingAttendance.updatedAt = new Date();
+      attendanceRecord = await existingAttendance.save();
+    } else {
+      // Create new attendance record
+      attendanceRecord = await Attendance.create({
+        classId,
+        sectionId,
+        date: attendanceDate,
+        students: studentsAttendance,
+        createdBy,
+        createdAt: new Date(),
+        updatedAt: new Date()
       });
     }
 
-    const [bulkResult] = await Promise.all([
-      Student.bulkWrite(bulkOps),
-      Notification.insertMany(notificationOps)
-    ]);
-
-    if (bulkResult.modifiedCount === 0 && bulkResult.upsertedCount === 0) {
-      return res.status(404).json({ success: false, message: 'No students found or no changes made' });
-    }
+    // Save all notifications
+    await Notification.insertMany(notificationOps);
 
     res.status(200).json({
       success: true,
       message: 'Attendance and notifications saved successfully',
       data: {
         class: classId,
+        section: sectionId,
         date: attendanceDate,
-        studentsUpdated: bulkResult.modifiedCount,
-        studentsAdded: bulkResult.upsertedCount
+        attendanceId: attendanceRecord._id
       }
     });
 
   } catch (error) {
     console.error('Error submitting attendance:', error);
-    res.status(500).json({ success: false, message: 'Failed to submit attendance', error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to submit attendance', 
+      error: error.message 
+    });
   }
 });
+Adminrouter.get('/attendance', async (req, res) =>{
+  try {
+    const attendence=await Attendance.find();
+    res.send({data:attendence})
+  } catch (error) {
+    console.log(error)
+  }
+})
+
+
+
+// Adminrouter.post('/attendance', async (req, res) => {
+//   try {
+//     const { classId, sectionId, date, attendance, createdBy, studentBased } = req.body;
+
+//     // Common validation for both approaches
+//     if (!classId || !date || !attendance) {
+//       return res.status(400).json({ success: false, message: 'Class ID, date, and attendance data are required' });
+//     }
+
+//     const attendanceDate = new Date(date);
+//     if (isNaN(attendanceDate.getTime())) {
+//       return res.status(400).json({ success: false, message: 'Invalid date format' });
+//     }
+
+//     // Handle student-based attendance (direct student records)
+//     if (studentBased) {
+//       const studentIds = Object.keys(attendance);
+//       const bulkOps = [];
+//       const notificationOps = [];
+
+//       for (const studentId of studentIds) {
+//         const studentAttendance = attendance[studentId];
+//         let status;
+//         let statusText;
+
+//         if (studentAttendance.present) {
+//           status = 'present';
+//           statusText = 'উপস্থিত';
+//         } else if (studentAttendance.absent) {
+//           status = 'absent';
+//           statusText = 'অনুপস্থিত';
+//         } else if (studentAttendance.late) {
+//           status = 'late';
+//           statusText = 'বিলম্বিত';
+//         } else {
+//           return res.status(400).json({ 
+//             success: false,
+//             message: `Invalid attendance status for student ${studentId}` 
+//           });
+//         }
+
+//         const notification = {
+//           title: 'হাজিরা সংরক্ষিত হয়েছে',
+//           message: `${attendanceDate.toLocaleDateString('bn-BD')} তারিখের জন্য আপনার হাজিরা "${statusText}" হিসেবে চিহ্নিত করা হয়েছে।`,
+//           date: new Date()
+//         };
+
+//         // Check if attendance already exists for this student/date
+//         const existingAttendance = await Student.findOne({
+//           _id: studentId,
+//           'attendance.date': attendanceDate
+//         });
+
+//         if (existingAttendance) {
+//           // Update existing attendance record
+//           bulkOps.push({
+//             updateOne: {
+//               filter: { _id: studentId, 'attendance.date': attendanceDate },
+//               update: {
+//                 $set: {
+//                   'attendance.$.status': status,
+//                   'attendance.$.remarks': studentAttendance.remarks || '',
+//                   updatedAt: new Date()
+//                 },
+//                 $push: {
+//                   notifications: notification
+//                 }
+//               }
+//             }
+//           });
+//         } else {
+//           // Add new attendance record
+//           bulkOps.push({
+//             updateOne: {
+//               filter: { _id: studentId, studentClass: classId },
+//               update: {
+//                 $push: {
+//                   attendance: { 
+//                     date: attendanceDate, 
+//                     status,
+//                     classId,
+//                     sectionId: sectionId || null,
+//                     remarks: studentAttendance.remarks || ''
+//                   },
+//                   notifications: notification
+//                 },
+//                 $set: { updatedAt: new Date() }
+//               }
+//             }
+//           });
+//         }
+
+//         notificationOps.push({
+//           studentId,
+//           ...notification
+//         });
+//       }
+
+//       const [bulkResult] = await Promise.all([
+//         Student.bulkWrite(bulkOps),
+//         Notification.insertMany(notificationOps)
+//       ]);
+
+//       if (bulkResult.modifiedCount === 0 && bulkResult.upsertedCount === 0) {
+//         return res.status(404).json({ success: false, message: 'No students found or no changes made' });
+//       }
+
+//       return res.status(200).json({
+//         success: true,
+//         message: 'Student-based attendance and notifications saved successfully',
+//         data: {
+//           class: classId,
+//           date: attendanceDate,
+//           studentsUpdated: bulkResult.modifiedCount,
+//           studentsAdded: bulkResult.upsertedCount
+//         }
+//       });
+//     }
+
+//     // Handle class/section-based attendance (Attendance collection + Student collection)
+//     if (!createdBy) {
+//       return res.status(400).json({ success: false, message: 'createdBy is required for class/section attendance' });
+//     }
+
+//     // Check if attendance already exists for this class/section/date
+//     const existingAttendance = await Attendance.findOne({
+//       classId,
+//       sectionId: sectionId || null,
+//       date: attendanceDate
+//     });
+
+//     const studentIds = Object.keys(attendance);
+//     const notificationOps = [];
+//     const studentBulkOps = [];
+
+//     // Prepare the students array for both Attendance and Student records
+//     const studentsAttendance = studentIds.map(studentId => {
+//       const studentAttendance = attendance[studentId];
+//       let status = {};
+//       let statusText;
+//       let studentStatus;
+
+//       if (studentAttendance.present) {
+//         status = { present: true, absent: false, late: false };
+//         statusText = 'উপস্থিত';
+//         studentStatus = 'present';
+//       } else if (studentAttendance.absent) {
+//         status = { present: false, absent: true, late: false };
+//         statusText = 'অনুপস্থিত';
+//         studentStatus = 'absent';
+//       } else if (studentAttendance.late) {
+//         status = { present: false, absent: false, late: true };
+//         statusText = 'বিলম্বিত';
+//         studentStatus = 'late';
+//       } else {
+//         throw new Error(`Invalid attendance status for student ${studentId}`);
+//       }
+
+//       // Prepare notification for each student
+//       notificationOps.push({
+//         studentId,
+//         title: 'হাজিরা সংরক্ষিত হয়েছে',
+//         message: `${attendanceDate.toLocaleDateString('bn-BD')} তারিখের জন্য আপনার হাজিরা "${statusText}" হিসেবে চিহ্নিত করা হয়েছে।`,
+//         date: new Date()
+//       });
+
+//       // Prepare student record update
+//       studentBulkOps.push({
+//         updateOne: {
+//           filter: { 
+//             _id: studentId,
+//             studentClass: classId 
+//           },
+//           update: {
+//             $pull: {
+//               attendance: {
+//                 date: attendanceDate,
+//                 classId: classId,
+//                 sectionId: sectionId || null
+//               }
+//             }
+//           }
+//         }
+//       });
+
+//       studentBulkOps.push({
+//         updateOne: {
+//           filter: { _id: studentId },
+//           update: {
+//             $push: {
+//               attendance: {
+//                 date: attendanceDate,
+//                 status: studentStatus,
+//                 classId: classId,
+//                 sectionId: sectionId || null,
+//                 remarks: studentAttendance.remarks || ''
+//               }
+//             },
+//             $set: { updatedAt: new Date() }
+//           }
+//         }
+//       });
+
+//       return {
+//         studentId,
+//         ...status,
+//         remarks: studentAttendance.remarks || ''
+//       };
+//     });
+
+//     // Save/update attendance record
+//     let attendanceRecord;
+//     if (existingAttendance) {
+//       existingAttendance.students = studentsAttendance;
+//       existingAttendance.updatedAt = new Date();
+//       attendanceRecord = await existingAttendance.save();
+//     } else {
+//       attendanceRecord = await Attendance.create({
+//         classId,
+//         sectionId,
+//         date: attendanceDate,
+//         students: studentsAttendance,
+//         createdBy,
+//         createdAt: new Date(),
+//         updatedAt: new Date()
+//       });
+//     }
+
+//     // Update all student records and send notifications
+//     await Promise.all([
+//       Student.bulkWrite(studentBulkOps),
+//       Notification.insertMany(notificationOps)
+//     ]);
+
+//     res.status(200).json({
+//       success: true,
+//       message: 'Class/section attendance and student records updated successfully',
+//       data: {
+//         class: classId,
+//         section: sectionId,
+//         date: attendanceDate,
+//         attendanceId: attendanceRecord._id,
+//         studentsUpdated: studentIds.length
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error('Error submitting attendance:', error);
+//     res.status(500).json({ 
+//       success: false, 
+//       message: 'Failed to submit attendance', 
+//       error: error.message 
+//     });
+//   }
+// });
 
 
 // Get students by class for attendance
+
 Adminrouter.get('/search-students', async (req, res) => {
   try {
     const { classId } = req.query;
@@ -1054,7 +1654,7 @@ Adminrouter.get('/routine/:className', async (req, res) => {
     const className = req.params.className;
  console.log(className)
     if (!className) {
-      return res.status(400).json({ success: false, message: 'Class name is required.' });
+      return res.json({ success: false, message: 'Class name is required.' });
     }
 
     const routine = await Routine.findOne({ "routine.className": className });
@@ -1080,12 +1680,12 @@ Adminrouter.post('/new-exam-routine', async (req, res) => {
 
     // Validate input data
     if (!Array.isArray(examData) || examData.length === 0) {
-      return res.status(400).json({ success: false, message: 'Exam routine data is required.' });
+      return res.json({ success: false, message: 'Exam routine data is required.' });
     }
 
     const className = examData[0]?.className;
     if (!className) {
-      return res.status(400).json({ success: false, message: 'Class name is required in exam data.' });
+      return res.json({ success: false, message: 'Class name is required in exam data.' });
     }
 
     // Find existing exam routine for this class
@@ -1131,7 +1731,7 @@ Adminrouter.post('/new-exam-routine', async (req, res) => {
 
     } else {
       // Create new exam routine
-      const newExamRoutine = new ExamRoutine({ 
+      const newExamRoutine = new Exam({ 
         examRoutine: examData.map(exam => ({
           ...exam,
           date: new Date(exam.date) // Ensure date is properly formatted
@@ -1178,7 +1778,7 @@ Adminrouter.get('/exam/:id', async (req, res) => {
   try {
     const examRoutine = await Exam.findById(req.params.id);
     if (!examRoutine) {
-      return res.status(404).json({ 
+      return res.json({ 
         success: false, 
         message: 'Exam routine not found' 
       });
@@ -1251,7 +1851,7 @@ Adminrouter.put('/exam-routine/:routineId/entry/:entryId', async (req, res) => {
 Adminrouter.get('/exam/class/:className', async (req, res) => {
   try {
     const className = req.params.className;
-    
+    console.log(className)
     // Find exams and unwind the examRoutine array
     const examRoutines = await Exam.aggregate([
       { $match: { 'examRoutine.className': className } },
@@ -1275,7 +1875,7 @@ Adminrouter.get('/exam/class/:className', async (req, res) => {
     ]);
 
     if (!examRoutines || examRoutines.length === 0) {
-      return res.status(404).json({ 
+      return res.json({ 
         success: false, 
         message: 'No exam routines found for the specified class' 
       });
@@ -1295,7 +1895,47 @@ Adminrouter.get('/exam/class/:className', async (req, res) => {
   }
 });
 
+// Get exam routines by teacher_id
+Adminrouter.get('/exam/teacher/:teacher_id', async (req, res) => {
+  try {
+    const teacher_id = req.params.teacher_id;
+    console.log(teacher_id)
+   const all_data=await Exam.find({teacher_id:teacher_id})
 
+     const results = await Exam.aggregate([
+        { $unwind: "$examRoutine" }, // Split the examRoutine array
+        { $match: { "examRoutine.teacher_id": teacher_id } }, // Match routines with teacher_id
+        {
+          $group: {
+            _id: "$_id",
+            examType: { $first: "$examRoutine.examType" },
+            date: { $first: "$examRoutine.date" },
+            routines: { $push: "$examRoutine" } // Group matching routines
+          }
+        },
+        { $project: { _id: 0, routines: 1 } } // Only return routines
+      ]);
+  console.log(results)
+      if (!results || results.length === 0) {
+        return res.json({
+          success: false,
+          message: "No exam routines found for this teacher",
+        });
+      }
+
+    res.status(200).json({ 
+      success: true, 
+      data: results 
+    });
+  } catch (error) {
+    console.error('Error fetching exam routines by teacher:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch exam routines by teacher',
+      error: error.message 
+    });
+  }
+});
 // Custom validation function
 const validateDailyDiary = (entry) => {
   const errors = {};
@@ -1369,7 +2009,7 @@ const validateDiaryEntry = (entry) => {
 Adminrouter.post('/daily-diary', async (req, res) => {
   try {
     const { entries } = req.body;
-    
+    console.log("HE;;P|",req.body)
     // Validate each entry
     const validationErrors = [];
     for (const [index, entry] of entries.entries()) {
@@ -1380,15 +2020,29 @@ Adminrouter.post('/daily-diary', async (req, res) => {
           errors
         });
       }
+      
+      // Validate createdBy and teacher_id
+      // if (!entry.createdBy) {
+      //   validationErrors.push({
+      //     index,
+      //     errors: { createdBy: 'createdBy is required' }
+      //   });
+      // }
+      // if (!entry.teacher_id) {
+      //   validationErrors.push({
+      //     index,
+      //     errors: { teacher_id: 'teacher_id is required' }
+      //   });
+      // }
     }
 
-    if (validationErrors.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: validationErrors
-      });
-    }
+    // if (validationErrors.length > 0) {
+    //   return res.json({
+    //     success: false,
+    //     message: 'Validation failed',
+    //     errors: validationErrors
+    //   });
+    // }
 
     // Find or create the main diary document
     let diary = await DailyDiary.findOne().sort({ createdAt: -1 });
@@ -1399,10 +2053,11 @@ Adminrouter.post('/daily-diary', async (req, res) => {
     // Process each entry
     const results = [];
     for (const entry of entries) {
-      // Check if entry with same className and subjectName exists
+      // Check if entry with same className, subjectName and teacher_id exists
       const existingEntryIndex = diary.entries.findIndex(e => 
         e.className === entry.className && 
-        e.subjectName === entry.subjectName
+        e.subjectName === entry.subjectName &&
+        e.teacher_id === entries.teacher_id
       );
 
       if (existingEntryIndex >= 0) {
@@ -1410,15 +2065,18 @@ Adminrouter.post('/daily-diary', async (req, res) => {
         diary.entries[existingEntryIndex] = {
           ...diary.entries[existingEntryIndex],
           ...entry,
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          createdBy: entry.createdBy, // Ensure createdBy is preserved
+          teacher_id: entries.teacher_id // Ensure teacher_id is preserved
         };
         results.push(diary.entries[existingEntryIndex]);
       } else {
-        // Add new entry
+        // Add new entry with createdBy and teacher_id
         const newEntry = {
           ...entry,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          teacher_id: entries.teacher_id
         };
         diary.entries.push(newEntry);
         results.push(newEntry);
@@ -1640,7 +2298,7 @@ Adminrouter.get('/daily-diary/class/:className', async (req, res) => {
     const diary = await DailyDiary.findOne().sort({ createdAt: -1 });
 
     if (!diary) {
-      return res.status(404).json({
+      return res.json({
         success: false,
         message: 'No diary data found'
       });
@@ -1672,6 +2330,49 @@ Adminrouter.get('/daily-diary/class/:className', async (req, res) => {
     });
   }
 });
+Adminrouter.get('/daily-diary/teacher/:teacherId', async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    
+    // Find all diary documents that have entries with the given teacher_id
+    const diaries = await DailyDiary.find({
+      'entries.teacher_id': teacherId
+    });
+
+    if (!diaries || diaries.length === 0) {
+      console.log( `No entries found for teacher with ID ${teacherId}`)
+
+      return res.json({
+        success: false,
+        message: `No entries found for teacher with ID ${teacherId}`,
+      });
+    }
+
+    // Collect all entries for the teacher from all diary documents
+    let allEntries = [];
+    diaries.forEach(diary => {
+      const teacherEntries = diary.entries.filter(entry => 
+        entry.teacher_id === teacherId
+      );
+      allEntries = allEntries.concat(teacherEntries);
+    });
+
+    // Sort all entries by date in descending order
+    allEntries.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.status(200).json({
+      success: true,
+      data: allEntries,
+    });
+  } catch (error) {
+    console.error('Error fetching entries by teacherId:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch diary entries by teacherId',
+      error: error.message,
+    });
+  }
+});
 // -------------------notification-------------------
 // POST /notifications - Create a new notification
 Adminrouter.post('/notification', async (req, res) => {
@@ -1697,5 +2398,302 @@ Adminrouter.post('/notification', async (req, res) => {
     console.error('Error creating notification:', err);
     res.status(500).json({ error: 'Server error. Could not create notification.' });
   }
+});
+
+
+
+// -----------------------exam-name------------------------
+// Create exam
+Adminrouter.post('/exam-name', async (req, res) => {
+  try {
+    const { name, title } = req.body;
+    const exam = new Examname({ name, title });
+    await exam.save();
+    res.status(201).json(exam);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get all exams
+Adminrouter.get('/exam-name', async (req, res) => {
+  try {
+    const exams = await Examname.find().sort({ createdAt: -1 });
+    res.json(exams);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get single exam
+Adminrouter.get('/exam-name/:id', async (req, res) => {
+  try {
+    const exam = await Examname.findById(req.params.id);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    res.json(exam);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update exam
+Adminrouter.put('/exam-name/:id', async (req, res) => {
+  try {
+    const { name, title } = req.body;
+    const updated = await Examname.findByIdAndUpdate(
+      req.params.id,
+      { name, title },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: 'Exam not found' });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete exam
+Adminrouter.delete('/exam-name/:id', async (req, res) => {
+  try {
+    const deleted = await Examname.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Exam not found' });
+    res.json({ message: 'Exam deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+Adminrouter.delete('/exam-name', async (req, res) => {
+  try {
+    const { confirmation } = req.body;
+    
+
+    const result = await Examname.deleteMany({});
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} exam(s)`,
+      deletedCount: result.deletedCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------banner-upload-------------------------------
+Adminrouter.get('/all-banners', async (req, res) => {
+  try {
+    const posts = await ImagePost.find().sort({ createdAt: -1 });
+    console.log(posts)
+    res.json({data:posts});
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+// GET single image post
+Adminrouter.get('/banner/:id', async (req, res) => {
+  try {
+    const post = await ImagePost.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Post not found' });
+    res.json(post);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// DELETE image post
+Adminrouter.delete('/delete-banner/:id', async (req, res) => {
+  try {
+    const post = await ImagePost.findByIdAndDelete(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Post not found' });
+    
+    // Here you would also delete the actual image file if needed
+    res.json({ message: 'Post deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+// POST new image post
+Adminrouter.post('/banner', uploadimage.single('image'), async (req, res) => {
+  try {
+    const { title, description } = req.body;
+
+
+    const newPost = new ImagePost({
+      title,
+      description,
+      imageUrl:req.file.filename
+    });
+
+    const savedPost = await newPost.save();
+    res.status(201).json(savedPost);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+// --------------------notice---------------------------
+Adminrouter.post('/notices',uploadimage.single("image"),async (req, res) => {
+     try {
+            const { title, content, student_ids } = req.body;
+            
+            // Convert student_ids to array if it's not already
+            const studentIdsArray = Array.isArray(student_ids) 
+                ? student_ids 
+                : student_ids ? [student_ids] : [];
+            
+            const noticeData = {
+                title,
+                content,
+                student_ids: studentIdsArray,
+                priority: req.body.priority || 'medium'
+            };
+
+            // If file was uploaded, add the path to the notice data
+            if (req.file) {
+                noticeData.image = req.file.filename;
+            }
+
+            const notice = new Notice(noticeData);
+            const savedNotice = await notice.save();
+            res.status(201).json(savedNotice);
+        } catch (err) {
+            res.status(400).json({ message: err.message });
+        }
+});
+
+// GET route - Get all notices
+Adminrouter.get('/notices', async (req, res) => {
+    try {
+        const notices = await Notice.find();
+        res.json(notices);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// GET route - Get a single notice by ID
+Adminrouter.get('/notices/:id', async (req, res) => {
+    try {
+        const notice = await Notice.findById(req.params.id);
+        if (!notice) {
+            return res.status(404).json({ message: 'Notice not found' });
+        }
+        res.json(notice);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// GET route - Get notices by student_id
+Adminrouter.get('/notice/:student_id', async (req, res) => {
+    try {
+        const notices = await Notice.find({ student_ids: req.params.student_id });
+        if (notices.length === 0) {
+            return res.status(404).json({ message: 'No notices found for this student' });
+        }
+        res.json(notices);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+
+
+// PUT route - Update an entire notice
+Adminrouter.put('/notices/:id', async (req, res) => {
+    try {
+        const notice = await Notice.findById(req.params.id);
+        if (!notice) {
+            return res.status(404).json({ message: 'Notice not found' });
+        }
+
+        notice.title = req.body.title;
+        notice.content = req.body.content;
+        notice.student_ids = req.body.student_ids;
+        notice.student_names = req.body.student_names;
+        notice.image = req.body.image;
+        notice.priority = req.body.priority;
+        notice.is_active = req.body.is_active;
+
+        const updatedNotice = await notice.save();
+        res.json(updatedNotice);
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
+});
+
+// PATCH route - Partially update a notice
+Adminrouter.patch('/notices/:id', async (req, res) => {
+    try {
+        const notice = await Notice.findById(req.params.id);
+        if (!notice) {
+            return res.status(404).json({ message: 'Notice not found' });
+        }
+
+        // Only update the fields that are passed in the request body
+        if (req.body.title != null) notice.title = req.body.title;
+        if (req.body.content != null) notice.content = req.body.content;
+        if (req.body.student_ids != null) notice.student_ids = req.body.student_ids;
+        if (req.body.student_names != null) notice.student_names = req.body.student_names;
+        if (req.body.image != null) notice.image = req.body.image;
+        if (req.body.priority != null) notice.priority = req.body.priority;
+        if (req.body.is_active != null) notice.is_active = req.body.is_active;
+
+        const updatedNotice = await notice.save();
+        res.json(updatedNotice);
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
+});
+
+// DELETE route - Delete a specific notice by ID
+Adminrouter.delete('/delete-notices/:id', async (req, res) => {
+    try {
+        const notice = await Notice.findByIdAndDelete(req.params.id);
+        if (!notice) {
+            return res.status(404).json({ message: 'Notice not found' });
+        }
+
+        res.json({ message: 'Notice deleted' });
+    } catch (err) {
+      console.log(err)
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// DELETE route - Delete all notices (use with caution)
+Adminrouter.delete('/delete-notice', async (req, res) => {
+    try {
+        await Notice.deleteMany({});
+        res.json({ message: 'All notices deleted' });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
+
+
+// Route to get notices by student_id
+Adminrouter.get('/notices/student/:student_id', async (req, res) => {
+    try {
+        const student_id = req.params.student_id;
+        console.log(student_id)
+        // Validate the student_id is a valid ObjectId
+        // if (!mongoose.Types.ObjectId.isValid(student_id)) {
+        //     return res.status(400).json({ message: 'Invalid student ID' });
+        // }
+
+        // Find notices where the student_ids array contains the provided student_id
+        const notices = await Notice.find({
+            student_ids: student_id,
+            is_active: true // optional: only get active notices
+        }).sort({ date_posted: -1 }); // sort by most recent first
+
+        if (notices.length === 0) {
+            return res.status(404).json({ message: 'No notices found for this student' });
+        }
+
+        res.status(200).json(notices);
+    } catch (error) {
+        console.error('Error fetching notices:', error);
+        res.status(500).json({ message: 'Server error while fetching notices' });
+    }
 });
 module.exports = Adminrouter;

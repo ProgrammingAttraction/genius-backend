@@ -33,6 +33,9 @@ const diaryEntrySchema = new mongoose.Schema({
   note: {
     type: String,
     default: ''
+  },
+  teacher_id:{
+     type: String,
   }
 }, { timestamps: true });
 
